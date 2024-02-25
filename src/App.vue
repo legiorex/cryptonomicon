@@ -1,11 +1,30 @@
 <template>
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
-    <!-- <div class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center">
-    <svg class="animate-spin -ml-1 mr-3 h-12 w-12 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-    </svg>
-  </div> -->
+    <div
+      v-if="loading"
+      class="fixed w-100 h-100 bg-purple-800 inset-0 z-50 flex items-center justify-center"
+    >
+      <svg
+        class="animate-spin -ml-1 mr-3 h-12 w-12 text-white"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle
+          class="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          stroke-width="4"
+        ></circle>
+        <path
+          class="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        ></path>
+      </svg>
+    </div>
     <div class="container">
       <section>
         <div class="flex">
@@ -22,29 +41,20 @@
                 placeholder="Например DOGE"
               />
             </div>
-            <div class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap">
+            <div
+              v-if="!!coinsLinks.length"
+              class="flex bg-white p-1 rounded-md shadow-md flex-wrap"
+            >
               <span
+                v-for="coin in coinsLinks"
+                :key="coin.Id"
+                @click="addTicker(coin.Symbol)"
                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
               >
-                BTC
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                DOGE
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                BCH
-              </span>
-              <span
-                class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
-              >
-                CHD
+                {{ coin.Symbol }}
               </span>
             </div>
-            <div class="text-sm text-red-600">Такой тикер уже добавлен</div>
+            <div v-if="!!error" class="text-sm text-red-600">{{ error }}</div>
           </div>
         </div>
         <button
@@ -145,7 +155,10 @@
 <style src="./app.css" scoped></style>
 
 <script setup lang="ts">
-import { reactive, ref, type Ref } from "vue"
+import { reactive, ref, type Ref, onMounted, onUpdated, watch } from "vue"
+import { links, errors } from "./config"
+
+const { coinPrice: coinPriceUrl, listCoins: listCoinsUrl } = links
 
 type AddTicker = (newTicker: string) => void
 type RemoveTicker = (id: number) => void
@@ -153,17 +166,73 @@ type Ticker = {
   name: string
   price: number
   id: number
+  interval: number
+}
+
+type Coin = {
+  Id: string
+  ImageUrl: string
+  Symbol: string
+  FullName: string
+}
+
+type ListCoinsResponse = {
+  Data: Record<string, Coin>
 }
 
 const tickers: Record<number, Ticker> = reactive({})
 const tickerName: Ref<string> = ref("")
+const error: Ref<string> = ref("")
 const sell: Ref<null | Ticker> = ref(null)
-// let interval: number
+let listCoins: Record<string, Coin> = reactive({})
+let loading = ref(true)
+let coinsLinks: Coin[] = []
+
+watch(tickerName, (newValue) => {
+  if (!newValue) return (coinsLinks = [])
+  const filteredCoins = Object.values(listCoins).filter((coin) => {
+    return coin.Symbol.toLowerCase().includes(newValue.toLowerCase())
+  })
+  coinsLinks = filteredCoins.slice(0, 4)
+  console.log("watch - tickerName", newValue)
+})
+
+const getListCoins = async () => {
+  fetch(listCoinsUrl)
+    .then(async (res) => {
+      const data: ListCoinsResponse = await res.json()
+      listCoins = data.Data
+    })
+    .finally(() => {
+      loading.value = false
+    })
+}
+
+onMounted(() => {
+  getListCoins()
+})
+
+onUpdated(() => {
+  if (!!error.value) {
+    setTimeout(() => {
+      error.value = ""
+    }, 3000)
+  }
+})
 
 const addTicker: AddTicker = async (newTicker: string) => {
+  if (Object.values(tickers).find((ticker) => ticker.name === newTicker)) {
+    error.value = errors.coinIsAdded
+    return
+  }
+  if (listCoins[newTicker.toUpperCase()] === undefined) {
+    error.value = errors.coinNotFound
+    return
+  }
+
   const id = new Date().getTime()
-  setInterval(async () => {
-    await fetch(`https://min-api.cryptocompare.com/data/price?fsym=${newTicker}&tsyms=USD`, {
+  const createInterval = setInterval(async () => {
+    await fetch(coinPriceUrl(newTicker), {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -176,7 +245,7 @@ const addTicker: AddTicker = async (newTicker: string) => {
     })
   }, 3000)
 
-  tickers[id] = { name: newTicker, price: 0, id }
+  tickers[id] = { name: newTicker, price: 0, id, interval: createInterval }
   tickerName.value = ""
 }
 
@@ -189,8 +258,8 @@ const unSelectTicker = () => {
 }
 
 const removeTicker: RemoveTicker = (id: number) => {
+  clearInterval(tickers[id].interval)
   delete tickers[id]
   sell.value = null
-  // clearInterval(interval)
 }
 </script>
