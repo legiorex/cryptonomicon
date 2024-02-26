@@ -7,4 +7,5 @@ const errors = {
   coinIsAdded: "Такой тикер уже добавлен",
   coinNotFound: "Такой тикер не найден"
 }
-export { links, errors }
+const authorization = "8eeac640f75e175be422bd2010f05530ebc854f8a3d5eed849ace17b045c4f72"
+export { links, errors, authorization }
