@@ -78,7 +78,7 @@
           Добавить
         </button>
       </section>
-      <template v-if="!!Object.values(tickers).length">
+      <template v-if="!!Object.keys(tickers).length">
         <hr class="w-full border-t border-gray-600 my-4" />
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
@@ -155,8 +155,8 @@
 <style src="./app.css" scoped></style>
 
 <script setup lang="ts">
-import { reactive, ref, type Ref, onMounted, onUpdated, watch } from "vue"
-import { links, errors } from "./config"
+import { reactive, ref, type Ref, onMounted, onUpdated, onBeforeMount, watch, computed } from "vue"
+import { links, errors, authorization } from "./config"
 
 const { coinPrice: coinPriceUrl, listCoins: listCoinsUrl } = links
 
@@ -176,11 +176,35 @@ type Coin = {
   FullName: string
 }
 
+type ListTickers = Record<number, Ticker>
+
 type ListCoinsResponse = {
   Data: Record<string, Coin>
 }
 
-const tickers: Record<number, Ticker> = reactive({})
+const getLocalTickers: ListTickers = localStorage.getItem("tickers")
+  ? JSON.parse(localStorage.getItem("tickers")!)
+  : {}
+
+const getCoinPrice = (coin: string, coinId: number) => {
+  const createInterval = setInterval(async () => {
+    await fetch(coinPriceUrl(coin), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        authorization
+      }
+    }).then(async (res) => {
+      const data: { USD: number } = await res.json()
+
+      tickers.value[coinId] = { ...tickers.value[coinId], price: data.USD }
+    })
+  }, 3000)
+  tickers.value[coinId] = { ...tickers.value[coinId], interval: createInterval }
+}
+
+const tickers: Ref<Record<number, Ticker>> = ref(getLocalTickers)
+const tickersLength: Ref<number> = ref(0)
 const tickerName: Ref<string> = ref("")
 const error: Ref<string> = ref("")
 const sell: Ref<null | Ticker> = ref(null)
@@ -188,13 +212,16 @@ let listCoins: Record<string, Coin> = reactive({})
 let loading = ref(true)
 let coinsLinks: Coin[] = []
 
+computed(() => {
+  tickersLength.value = Object.keys(tickers.value).length
+})
+
 watch(tickerName, (newValue) => {
   if (!newValue) return (coinsLinks = [])
   const filteredCoins = Object.values(listCoins).filter((coin) => {
     return coin.Symbol.toLowerCase().includes(newValue.toLowerCase())
   })
   coinsLinks = filteredCoins.slice(0, 4)
-  console.log("watch - tickerName", newValue)
 })
 
 const getListCoins = async () => {
@@ -207,9 +234,11 @@ const getListCoins = async () => {
       loading.value = false
     })
 }
-
-onMounted(() => {
+onBeforeMount(() => {
   getListCoins()
+})
+onMounted(() => {
+  tickersLength.value = Object.keys(tickers.value).length
 })
 
 onUpdated(() => {
@@ -219,6 +248,18 @@ onUpdated(() => {
     }, 3000)
   }
 })
+
+watch(tickersLength, (newValue, oldValue) => {
+  if (newValue > oldValue) {
+    Object.values(tickers.value).forEach((item) => {
+      getCoinPrice(item.name, item.id)
+    })
+  }
+})
+
+const saveTickerToLocalStorage = () => {
+  localStorage.setItem("tickers", JSON.stringify(tickers.value))
+}
 
 const addTicker: AddTicker = async (newTicker: string) => {
   if (Object.values(tickers).find((ticker) => ticker.name === newTicker)) {
@@ -231,21 +272,10 @@ const addTicker: AddTicker = async (newTicker: string) => {
   }
 
   const id = new Date().getTime()
-  const createInterval = setInterval(async () => {
-    await fetch(coinPriceUrl(newTicker), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        authorization: "8eeac640f75e175be422bd2010f05530ebc854f8a3d5eed849ace17b045c4f72"
-      }
-    }).then(async (res) => {
-      const data: { USD: number } = await res.json()
 
-      tickers[id] = { ...tickers[id], price: data.USD }
-    })
-  }, 3000)
-
-  tickers[id] = { name: newTicker, price: 0, id, interval: createInterval }
+  tickers.value[id] = { name: newTicker, price: 0, id, interval: 0 }
+  tickersLength.value++
+  saveTickerToLocalStorage()
   tickerName.value = ""
 }
 
@@ -258,8 +288,9 @@ const unSelectTicker = () => {
 }
 
 const removeTicker: RemoveTicker = (id: number) => {
-  clearInterval(tickers[id].interval)
-  delete tickers[id]
+  clearInterval(tickers.value[id].interval)
+  delete tickers.value[id]
+  saveTickerToLocalStorage()
   sell.value = null
 }
 </script>
